@@ -34,38 +34,58 @@ class ChecklistApp:
         self.bulk_panel = None
         self.stats_panel = None
         self.is_loading = False
+        self.left_panel_visible = True
+        self.left_content = None  # Содержимое левой панели (без заголовка)
+        self.main_frame = None
+        self.toggle_btn = None
+        self.left_header = None  # Заголовок с кнопкой
 
         # Создаем интерфейс
         self.setup_ui()
 
     def setup_ui(self):
         """Создание пользовательского интерфейса"""
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+        self.main_frame = ttk.Frame(self.root, padding="10")
+        self.main_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+        self.main_frame.columnconfigure(1, weight=1)
+        self.main_frame.rowconfigure(0, weight=1)
 
-        # Левая панель
-        self.setup_left_panel(main_frame)
+        # Левая панель (с кнопкой в заголовке)
+        self.setup_left_panel()
 
         # Правая панель
-        self.setup_right_panel(main_frame)
+        self.setup_right_panel()
 
         # Настройка весов
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(0, weight=1)
 
         # Обновляем дерево проектов
         self.update_projects_tree()
 
-    def setup_left_panel(self, parent):
+    def setup_left_panel(self):
         """Создание левой панели с деревом проектов"""
-        left_frame = ttk.LabelFrame(parent, text="Проекты и объекты", padding="10")
-        left_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S), padx=(0, 10))
+        left_container = ttk.Frame(self.main_frame)
+        left_container.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S), padx=(0, 10))
+        left_container.columnconfigure(0, weight=1)
+
+        # Заголовок с кнопкой скрытия (всегда видим)
+        self.left_header = ttk.Frame(left_container)
+        self.left_header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
+
+        ttk.Label(self.left_header, text="Проекты и объекты", font=('Arial', 10, 'bold')).pack(side=tk.LEFT)
+
+        self.toggle_btn = ttk.Button(self.left_header, text="◀", width=3,
+                                     command=self.toggle_left_panel)
+        self.toggle_btn.pack(side=tk.RIGHT)
+
+        # Содержимое левой панели (скрывается/показывается)
+        self.left_content = ttk.Frame(left_container)
+        self.left_content.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
 
         # Кнопки управления
-        btn_frame = ttk.Frame(left_frame)
-        btn_frame.grid(row=0, column=0, pady=5, sticky=tk.EW)
+        btn_frame = ttk.Frame(self.left_content)
+        btn_frame.pack(fill=tk.X, pady=5)
 
         ttk.Button(btn_frame, text="➕ Проект",
                    command=self.add_project_dialog).pack(side=tk.LEFT, padx=2)
@@ -76,12 +96,16 @@ class ChecklistApp:
         ttk.Button(btn_frame, text="🗑️ Удалить",
                    command=self.delete_item).pack(side=tk.LEFT, padx=2)
 
-        # Дерево проектов
-        tree_frame = ttk.Frame(left_frame)
-        tree_frame.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+        # Дерево проектов с прокруткой
+        tree_frame = ttk.Frame(self.left_content)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        tree_scrollbar = ttk.Scrollbar(tree_frame)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.projects_tree = ttk.Treeview(tree_frame, columns=("version", "template"),
-                                          selectmode="browse", height=25)
+                                          selectmode="browse", height=25,
+                                          yscrollcommand=tree_scrollbar.set)
         self.projects_tree.heading("#0", text="Название")
         self.projects_tree.heading("version", text="Версия")
         self.projects_tree.heading("template", text="Шаблон")
@@ -89,28 +113,42 @@ class ChecklistApp:
         self.projects_tree.column("version", width=Config.TREE_COLUMN_WIDTHS["version"])
         self.projects_tree.column("template", width=Config.TREE_COLUMN_WIDTHS["template"])
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical",
-                                  command=self.projects_tree.yview)
-        self.projects_tree.configure(yscrollcommand=scrollbar.set)
-
-        self.projects_tree.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.projects_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scrollbar.config(command=self.projects_tree.yview)
 
         self.projects_tree.bind('<<TreeviewSelect>>', self.on_tree_select)
 
-        # Настройка весов
-        left_frame.columnconfigure(0, weight=1)
-        left_frame.rowconfigure(1, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
-        tree_frame.rowconfigure(0, weight=1)
-
-    def setup_right_panel(self, parent):
+    def setup_right_panel(self):
         """Создание правой панели с чек-листами"""
-        right_frame = ttk.LabelFrame(parent, text="Чек-листы", padding="10")
+        right_frame = ttk.Frame(self.main_frame)
         right_frame.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E, tk.S))
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(0, weight=1)
 
-        # Верхняя панель с информацией и настройками
-        self.setup_top_info_panel(right_frame)
+        # Верхняя панель с информацией
+        top_frame = ttk.Frame(right_frame)
+        top_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
+
+        # Информация о текущем элементе
+        info_frame = ttk.LabelFrame(top_frame, text="Текущий элемент", padding="5")
+        info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Label(info_frame, text="Тип:").grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.type_label = ttk.Label(info_frame, text="—", font=('Arial', 10, 'bold'))
+        self.type_label.grid(row=0, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(info_frame, text="Название:").grid(row=0, column=2, sticky=tk.W, padx=20)
+        self.current_name_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
+        self.current_name_label.grid(row=0, column=3, sticky=tk.W, padx=5)
+
+        ttk.Label(info_frame, text="Версия:").grid(row=0, column=4, sticky=tk.W, padx=20)
+        self.current_version_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
+        self.current_version_label.grid(row=0, column=5, sticky=tk.W, padx=5)
+
+        # Кнопка настроек
+        settings_btn = ttk.Button(top_frame, text="⚙️", width=3,
+                                  command=self.show_settings_dialog)
+        settings_btn.pack(side=tk.RIGHT, padx=(5, 0))
 
         # Горизонтальный контейнер для чек-листов и массовых операций
         horizontal_container = ttk.Frame(right_frame)
@@ -118,7 +156,7 @@ class ChecklistApp:
         horizontal_container.columnconfigure(0, weight=1)
         horizontal_container.rowconfigure(0, weight=1)
 
-        # Ноутбук с чек-листами
+        # Ноутбук с чек-листами (с прокруткой)
         notebook_frame = ttk.Frame(horizontal_container)
         notebook_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
         notebook_frame.columnconfigure(0, weight=1)
@@ -149,35 +187,18 @@ class ChecklistApp:
         ttk.Button(template_select_frame, text="Применить шаблон",
                    command=self.apply_template_to_project).pack(side=tk.LEFT, padx=5)
 
-        # Настройка весов
-        right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(1, weight=1)
-
-    def setup_top_info_panel(self, parent):
-        """Создание верхней панели с информацией и настройками"""
-        top_frame = ttk.Frame(parent)
-        top_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
-
-        # Информация о текущем элементе
-        info_frame = ttk.LabelFrame(top_frame, text="Текущий элемент", padding="5")
-        info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        ttk.Label(info_frame, text="Тип:").grid(row=0, column=0, sticky=tk.W, padx=5)
-        self.type_label = ttk.Label(info_frame, text="—", font=('Arial', 10, 'bold'))
-        self.type_label.grid(row=0, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(info_frame, text="Название:").grid(row=0, column=2, sticky=tk.W, padx=20)
-        self.current_name_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
-        self.current_name_label.grid(row=0, column=3, sticky=tk.W, padx=5)
-
-        ttk.Label(info_frame, text="Версия:").grid(row=0, column=4, sticky=tk.W, padx=20)
-        self.current_version_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
-        self.current_version_label.grid(row=0, column=5, sticky=tk.W, padx=5)
-
-        # Кнопка настроек
-        settings_btn = ttk.Button(top_frame, text="⚙️ Настройки",
-                                  command=self.show_settings_dialog)
-        settings_btn.pack(side=tk.RIGHT, padx=5)
+    def toggle_left_panel(self):
+        """Скрывает или показывает содержимое левой панели"""
+        if self.left_panel_visible:
+            # Скрываем содержимое, но оставляем заголовок с кнопкой
+            self.left_content.grid_remove()
+            self.toggle_btn.config(text="▶")
+            self.left_panel_visible = False
+        else:
+            # Показываем содержимое
+            self.left_content.grid()
+            self.toggle_btn.config(text="◀")
+            self.left_panel_visible = True
 
     def center_window(self, window):
         """Центрирует окно относительно главного"""
@@ -204,17 +225,12 @@ class ChecklistApp:
         dialog.transient(self.root)
         dialog.grab_set()
 
-        # Центрируем окно
         self.center_window(dialog)
 
-        # Создаем вкладки в диалоге настроек
         notebook = ttk.Notebook(dialog)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Вкладка управления шаблонами
         self.setup_templates_tab(notebook)
-
-        # Вкладка экспорта
         self.setup_export_tab(notebook)
 
     def setup_templates_tab(self, notebook):
@@ -222,11 +238,9 @@ class ChecklistApp:
         tab = ttk.Frame(notebook)
         notebook.add(tab, text="Управление шаблонами")
 
-        # Список шаблонов
         list_frame = ttk.LabelFrame(tab, text="Доступные шаблоны", padding="5")
         list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Список
         template_listbox = tk.Listbox(list_frame, height=15)
         template_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -234,11 +248,9 @@ class ChecklistApp:
         template_listbox.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Заполняем список
         for template_name in self.template_manager.get_template_names():
             template_listbox.insert(tk.END, template_name)
 
-        # Кнопки управления
         btn_frame = ttk.Frame(tab)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -256,7 +268,6 @@ class ChecklistApp:
         tab = ttk.Frame(notebook)
         notebook.add(tab, text="Экспорт результатов")
 
-        # Информация о текущем проекте
         info_frame = ttk.LabelFrame(tab, text="Текущий проект", padding="5")
         info_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -270,11 +281,9 @@ class ChecklistApp:
         else:
             ttk.Label(info_frame, text="Проект не выбран").pack(anchor=tk.W)
 
-        # Настройки экспорта
         options_frame = ttk.LabelFrame(tab, text="Параметры экспорта", padding="5")
         options_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Выбор формата
         format_frame = ttk.Frame(options_frame)
         format_frame.pack(fill=tk.X, pady=5)
 
@@ -285,7 +294,6 @@ class ChecklistApp:
         ttk.Radiobutton(format_frame, text="PDF", variable=export_format,
                         value="pdf").pack(side=tk.LEFT, padx=10)
 
-        # Выбор области экспорта
         scope_frame = ttk.Frame(options_frame)
         scope_frame.pack(fill=tk.X, pady=5)
 
@@ -296,7 +304,6 @@ class ChecklistApp:
         ttk.Radiobutton(scope_frame, text="Весь проект", variable=export_scope,
                         value="project").pack(side=tk.LEFT, padx=10)
 
-        # Кнопка экспорта
         btn_frame = ttk.Frame(tab)
         btn_frame.pack(fill=tk.X, padx=5, pady=20)
 
@@ -308,10 +315,8 @@ class ChecklistApp:
             format_type = export_format.get()
             scope_type = export_scope.get()
 
-            # Собираем данные для экспорта
             data = self.collect_export_data(scope_type)
 
-            # Выполняем экспорт
             if format_type == "excel":
                 success, message = self.export_manager.export_to_excel(data)
             else:
@@ -334,7 +339,6 @@ class ChecklistApp:
         }
 
         if scope == "current" and self.project_model.current_object:
-            # Экспорт только текущего объекта
             data["type"] = "object"
             data["object_name"] = self.project_model.current_object
             section = self.collect_object_data(self.project_model.current_project,
@@ -343,20 +347,17 @@ class ChecklistApp:
                 data["sections"].append(section)
 
         elif scope == "current" and not self.project_model.current_object:
-            # Экспорт общих чек-листов проекта
             data["type"] = "project_common"
             section = self.collect_project_common_data(self.project_model.current_project)
             if section:
                 data["sections"].append(section)
 
-        else:  # Весь проект
+        else:
             data["type"] = "full_project"
-            # Общие чек-листы
             common_section = self.collect_project_common_data(self.project_model.current_project)
             if common_section:
                 data["sections"].append(common_section)
 
-            # Объекты
             project_data = self.project_model.projects[self.project_model.current_project]
             for object_name in project_data.get("objects", {}):
                 object_section = self.collect_object_data(self.project_model.current_project, object_name)
@@ -595,7 +596,7 @@ class ChecklistApp:
 
             self.is_loading = True
 
-            if not parent:  # Выбран проект
+            if not parent:
                 project_name = self.projects_tree.item(item, "text")
                 self.project_model.current_project = project_name
                 self.project_model.current_object = None
@@ -604,12 +605,11 @@ class ChecklistApp:
                 self.current_name_label.config(text=project_name)
                 self.current_version_label.config(text=self.project_model.get_project_version(project_name))
 
-                # Загружаем шаблон и создаем вкладки
                 template_name = self.project_model.get_project_template(project_name)
                 template_data = self.template_manager.get_template_data(template_name)
                 self.rebuild_checklists(template_data, is_object=False)
 
-            else:  # Выбран объект
+            else:
                 project_name = self.projects_tree.item(parent, "text")
                 object_name = self.projects_tree.item(item, "text")
                 self.project_model.current_project = project_name
@@ -619,7 +619,6 @@ class ChecklistApp:
                 self.current_name_label.config(text=object_name)
                 self.current_version_label.config(text=self.project_model.get_project_version(project_name))
 
-                # Загружаем шаблон и создаем вкладки (только Генплан)
                 template_name = self.project_model.get_project_template(project_name)
                 template_data = self.template_manager.get_template_data(template_name)
                 self.rebuild_checklists(template_data, is_object=True)
@@ -629,25 +628,21 @@ class ChecklistApp:
 
     def rebuild_checklists(self, template_data, is_object=False):
         """Перестраивает чек-листы"""
-        # Очищаем текущие вкладки
         for tab in self.notebook.winfo_children():
             tab.destroy()
 
         self.checklist_tabs = {}
 
-        # Определяем, какие вкладки показывать
         tabs_to_show = template_data.keys()
         if is_object:
             tabs_to_show = ["Генплан"] if "Генплан" in template_data else []
 
-        # Создаем новые вкладки
         for tab_name in tabs_to_show:
             items = template_data.get(tab_name, [])
             tab = ChecklistTab(self.notebook, tab_name, items, self)
             self.notebook.add(tab.frame, text=tab_name)
             self.checklist_tabs[tab_name] = tab
 
-        # Загружаем данные
         self.load_current_data()
 
     def load_current_data(self):
@@ -655,14 +650,14 @@ class ChecklistApp:
         if not self.project_model.current_project:
             return
 
-        if not self.project_model.current_object:  # Проект
+        if not self.project_model.current_object:
             for tab_name, tab in self.checklist_tabs.items():
                 if tab_name != "Генплан":
                     for item in tab.items:
                         status, comment = self.project_model.get_project_item_status(
                             self.project_model.current_project, tab_name, item)
                         tab.set_item_status(item, status, comment)
-        else:  # Объект
+        else:
             if "Генплан" in self.checklist_tabs:
                 for item in self.checklist_tabs["Генплан"].items:
                     status, comment = self.project_model.get_object_item_status(
@@ -677,10 +672,10 @@ class ChecklistApp:
         if not self.project_model.current_project:
             return
 
-        if not self.project_model.current_object:  # Проект
+        if not self.project_model.current_object:
             self.project_model.save_project_item_status(
                 self.project_model.current_project, tab_name, item, status, comment)
-        else:  # Объект
+        else:
             self.project_model.save_object_item_status(
                 self.project_model.current_project,
                 self.project_model.current_object, item, status, comment)
@@ -697,7 +692,7 @@ class ChecklistApp:
         done = 0
         bug = 0
 
-        if not self.project_model.current_object:  # Проект
+        if not self.project_model.current_object:
             for tab_name, tab in self.checklist_tabs.items():
                 if tab_name != "Генплан":
                     for item in tab.items:
@@ -707,7 +702,7 @@ class ChecklistApp:
                             done += 1
                         elif status == 2:
                             bug += 1
-        else:  # Объект
+        else:
             if "Генплан" in self.checklist_tabs:
                 for item in self.checklist_tabs["Генплан"].items:
                     total += 1
@@ -720,13 +715,12 @@ class ChecklistApp:
         self.stats_panel.update_stats(total, done, bug)
 
     def update_bulk_buttons(self):
-        """Обновляет кнопки массовых операций в зависимости от выделения"""
+        """Обновляет кнопки массовых операций"""
         if not self.bulk_panel:
             return
 
         current_tab = self.get_current_tab()
         if current_tab:
-            # Используем метод get_selected_items() вместо атрибута selected_items
             has_selection = len(current_tab.get_selected_items()) > 0
             self.bulk_panel.update_buttons(has_selection)
 
@@ -870,7 +864,7 @@ class ChecklistApp:
         parent = self.projects_tree.parent(item)
         old_name = self.projects_tree.item(item, "text")
 
-        if not parent:  # Проект
+        if not parent:
             new_name = simpledialog.askstring("Переименовать проект",
                                               "Новое название:",
                                               initialvalue=old_name)
@@ -883,7 +877,7 @@ class ChecklistApp:
                 else:
                     messagebox.showerror("Ошибка", "Проект с таким названием уже существует")
 
-        else:  # Объект
+        else:
             project_name = self.projects_tree.item(parent, "text")
             new_name = simpledialog.askstring("Переименовать объект",
                                               "Новое название:",
@@ -908,7 +902,7 @@ class ChecklistApp:
         parent = self.projects_tree.parent(item)
         name = self.projects_tree.item(item, "text")
 
-        if not parent:  # Проект
+        if not parent:
             if messagebox.askyesno("Подтверждение", f"Удалить проект '{name}'?"):
                 if self.project_model.delete_project(name):
                     if self.project_model.current_project == name:
@@ -920,7 +914,7 @@ class ChecklistApp:
                     self.project_model.save_data()
                     self.update_projects_tree()
 
-        else:  # Объект
+        else:
             project_name = self.projects_tree.item(parent, "text")
             if messagebox.askyesno("Подтверждение", f"Удалить объект '{name}'?"):
                 if self.project_model.delete_object(project_name, name):
@@ -942,20 +936,15 @@ class ChecklistApp:
         template_name = self.template_combobox.get()
         template_data = self.template_manager.get_template_data(template_name)
 
-        # Обновляем шаблон проекта
         self.project_model.update_project_template(self.project_model.current_project, template_name)
-
-        # Перестраиваем чек-листы
         self.project_model.init_project_checklists(self.project_model.current_project, template_data)
 
-        # Обновляем объекты
         for object_name in self.project_model.projects[self.project_model.current_project].get("objects", {}):
             self.project_model.init_object_checklists(
                 self.project_model.current_project, object_name, template_data)
 
         self.project_model.save_data()
 
-        # Перезагружаем текущий элемент
         if self.project_model.current_object:
             self.rebuild_checklists(template_data, is_object=True)
             self.load_current_data()
@@ -963,7 +952,5 @@ class ChecklistApp:
             self.rebuild_checklists(template_data, is_object=False)
             self.load_current_data()
 
-        # Обновляем отображение в дереве
         self.update_projects_tree()
-
         messagebox.showinfo("Успех", f"Шаблон {template_name} применен к проекту")
