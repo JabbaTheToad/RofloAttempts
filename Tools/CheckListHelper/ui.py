@@ -35,10 +35,11 @@ class ChecklistApp:
         self.stats_panel = None
         self.is_loading = False
         self.left_panel_visible = True
-        self.left_content = None  # Содержимое левой панели (без заголовка)
+        self.left_content = None
         self.main_frame = None
         self.toggle_btn = None
-        self.left_header = None  # Заголовок с кнопкой
+        self.left_header = None
+        self.current_item_frame = None  # Новый фрейм для текущего элемента
 
         # Создаем интерфейс
         self.setup_ui()
@@ -48,7 +49,7 @@ class ChecklistApp:
         self.main_frame = ttk.Frame(self.root, padding="10")
         self.main_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
         self.main_frame.columnconfigure(1, weight=1)
-        self.main_frame.rowconfigure(0, weight=1)
+        self.main_frame.rowconfigure(1, weight=1)  # Изменено для правильного расположения
 
         # Левая панель (с кнопкой в заголовке)
         self.setup_left_panel()
@@ -66,10 +67,11 @@ class ChecklistApp:
     def setup_left_panel(self):
         """Создание левой панели с деревом проектов"""
         left_container = ttk.Frame(self.main_frame)
-        left_container.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S), padx=(0, 10))
+        left_container.grid(row=0, column=0, rowspan=2, sticky=(tk.N, tk.W, tk.E, tk.S), padx=(0, 10))
         left_container.columnconfigure(0, weight=1)
+        left_container.rowconfigure(1, weight=1)
 
-        # Заголовок с кнопкой скрытия (всегда видим)
+        # Заголовок с кнопкой скрытия
         self.left_header = ttk.Frame(left_container)
         self.left_header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
 
@@ -79,13 +81,15 @@ class ChecklistApp:
                                      command=self.toggle_left_panel)
         self.toggle_btn.pack(side=tk.RIGHT)
 
-        # Содержимое левой панели (скрывается/показывается)
+        # Содержимое левой панели
         self.left_content = ttk.Frame(left_container)
         self.left_content.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+        self.left_content.columnconfigure(0, weight=1)
+        self.left_content.rowconfigure(1, weight=1)
 
         # Кнопки управления
         btn_frame = ttk.Frame(self.left_content)
-        btn_frame.pack(fill=tk.X, pady=5)
+        btn_frame.grid(row=0, column=0, sticky=tk.EW, pady=5)
 
         ttk.Button(btn_frame, text="➕ Проект",
                    command=self.add_project_dialog).pack(side=tk.LEFT, padx=2)
@@ -98,13 +102,15 @@ class ChecklistApp:
 
         # Дерево проектов с прокруткой
         tree_frame = ttk.Frame(self.left_content)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
+        tree_frame.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
 
         tree_scrollbar = ttk.Scrollbar(tree_frame)
-        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree_scrollbar.grid(row=0, column=1, sticky=tk.NS)
 
         self.projects_tree = ttk.Treeview(tree_frame, columns=("version", "template"),
-                                          selectmode="browse", height=25,
+                                          selectmode="browse",
                                           yscrollcommand=tree_scrollbar.set)
         self.projects_tree.heading("#0", text="Название")
         self.projects_tree.heading("version", text="Версия")
@@ -113,50 +119,67 @@ class ChecklistApp:
         self.projects_tree.column("version", width=Config.TREE_COLUMN_WIDTHS["version"])
         self.projects_tree.column("template", width=Config.TREE_COLUMN_WIDTHS["template"])
 
-        self.projects_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.projects_tree.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
         tree_scrollbar.config(command=self.projects_tree.yview)
 
         self.projects_tree.bind('<<TreeviewSelect>>', self.on_tree_select)
 
     def setup_right_panel(self):
         """Создание правой панели с чек-листами"""
-        right_frame = ttk.Frame(self.main_frame)
-        right_frame.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E, tk.S))
-        right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(0, weight=1)
+        right_container = ttk.Frame(self.main_frame)
+        right_container.grid(row=0, column=1, rowspan=2, sticky=(tk.N, tk.W, tk.E, tk.S))
+        right_container.columnconfigure(0, weight=1)
+        right_container.rowconfigure(1, weight=1)
 
-        # Верхняя панель с информацией
-        top_frame = ttk.Frame(right_frame)
-        top_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
+        # Верхний блок с информацией о текущем элементе и настройками
+        self.setup_info_block(right_container)
 
-        # Информация о текущем элементе
-        info_frame = ttk.LabelFrame(top_frame, text="Текущий элемент", padding="5")
-        info_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Основной блок с чек-листами
+        self.setup_checklist_block(right_container)
 
-        ttk.Label(info_frame, text="Тип:").grid(row=0, column=0, sticky=tk.W, padx=5)
-        self.type_label = ttk.Label(info_frame, text="—", font=('Arial', 10, 'bold'))
+        # Нижний блок с выбором шаблона
+        self.setup_template_block(right_container)
+
+    def setup_info_block(self, parent):
+        """Создает блок с информацией о текущем элементе"""
+        info_block = ttk.LabelFrame(parent, text="Текущий элемент", padding="10")
+        info_block.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
+        info_block.columnconfigure(1, weight=1)
+
+        # Тип элемента
+        ttk.Label(info_block, text="Тип:", font=('Arial', 9)).grid(row=0, column=0, sticky=tk.W, padx=5)
+        self.type_label = ttk.Label(info_block, text="—", font=('Arial', 9, 'bold'))
         self.type_label.grid(row=0, column=1, sticky=tk.W, padx=5)
 
-        ttk.Label(info_frame, text="Название:").grid(row=0, column=2, sticky=tk.W, padx=20)
-        self.current_name_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
+        # Название
+        ttk.Label(info_block, text="Название:", font=('Arial', 9)).grid(row=0, column=2, sticky=tk.W, padx=(20, 5))
+        self.current_name_label = ttk.Label(info_block, text="—", font=('Arial', 9))
         self.current_name_label.grid(row=0, column=3, sticky=tk.W, padx=5)
 
-        ttk.Label(info_frame, text="Версия:").grid(row=0, column=4, sticky=tk.W, padx=20)
-        self.current_version_label = ttk.Label(info_frame, text="—", font=('Arial', 10))
+        # Версия
+        ttk.Label(info_block, text="Версия:", font=('Arial', 9)).grid(row=0, column=4, sticky=tk.W, padx=(20, 5))
+        self.current_version_label = ttk.Label(info_block, text="—", font=('Arial', 9))
         self.current_version_label.grid(row=0, column=5, sticky=tk.W, padx=5)
 
-        # Кнопка настроек
-        settings_btn = ttk.Button(top_frame, text="⚙️", width=3,
+        # Кнопка настроек (в том же ряду)
+        settings_btn = ttk.Button(info_block, text="⚙️", width=3,
                                   command=self.show_settings_dialog)
-        settings_btn.pack(side=tk.RIGHT, padx=(5, 0))
+        settings_btn.grid(row=0, column=6, padx=(20, 5))
+
+    def setup_checklist_block(self, parent):
+        """Создает блок с чек-листами и массовыми операциями"""
+        checklist_block = ttk.Frame(parent)
+        checklist_block.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S), pady=10)
+        checklist_block.columnconfigure(0, weight=1)
+        checklist_block.rowconfigure(0, weight=1)
 
         # Горизонтальный контейнер для чек-листов и массовых операций
-        horizontal_container = ttk.Frame(right_frame)
-        horizontal_container.grid(row=1, column=0, sticky=(tk.N, tk.W, tk.E, tk.S), pady=10)
+        horizontal_container = ttk.Frame(checklist_block)
+        horizontal_container.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
         horizontal_container.columnconfigure(0, weight=1)
         horizontal_container.rowconfigure(0, weight=1)
 
-        # Ноутбук с чек-листами (с прокруткой)
+        # Ноутбук с чек-листами
         notebook_frame = ttk.Frame(horizontal_container)
         notebook_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E, tk.S))
         notebook_frame.columnconfigure(0, weight=1)
@@ -171,31 +194,33 @@ class ChecklistApp:
         # Панель массовых операций
         self.bulk_panel = BulkOperationsPanel(horizontal_container, self)
 
-        # Панель статистики
-        self.stats_panel = StatsPanel(right_frame, self)
-        self.stats_panel.grid(row=2, column=0, pady=10, sticky=tk.EW)
+        # Панель статистики (под чек-листами)
+        self.stats_panel = StatsPanel(checklist_block, self)
+        self.stats_panel.grid(row=1, column=0, pady=(10, 0), sticky=tk.EW)
 
-        # Выбор шаблона для проекта (внизу)
-        template_select_frame = ttk.Frame(right_frame)
-        template_select_frame.grid(row=3, column=0, sticky=tk.EW, pady=5)
+    def setup_template_block(self, parent):
+        """Создает блок выбора шаблона"""
+        template_block = ttk.LabelFrame(parent, text="Шаблон чек-листов", padding="10")
+        template_block.grid(row=2, column=0, sticky=tk.EW, pady=(10, 0))
+        template_block.columnconfigure(1, weight=1)
 
-        ttk.Label(template_select_frame, text="Шаблон для проекта:").pack(side=tk.LEFT, padx=5)
-        self.template_combobox = ttk.Combobox(template_select_frame,
+        ttk.Label(template_block, text="Выберите шаблон:").grid(row=0, column=0, sticky=tk.W, padx=5)
+
+        self.template_combobox = ttk.Combobox(template_block,
                                               values=self.template_manager.get_template_names(),
-                                              state="readonly", width=30)
-        self.template_combobox.pack(side=tk.LEFT, padx=5)
-        ttk.Button(template_select_frame, text="Применить шаблон",
-                   command=self.apply_template_to_project).pack(side=tk.LEFT, padx=5)
+                                              state="readonly", width=40)
+        self.template_combobox.grid(row=0, column=1, sticky=tk.W, padx=5)
+
+        ttk.Button(template_block, text="Применить шаблон",
+                   command=self.apply_template_to_project).grid(row=0, column=2, padx=5)
 
     def toggle_left_panel(self):
         """Скрывает или показывает содержимое левой панели"""
         if self.left_panel_visible:
-            # Скрываем содержимое, но оставляем заголовок с кнопкой
             self.left_content.grid_remove()
             self.toggle_btn.config(text="▶")
             self.left_panel_visible = False
         else:
-            # Показываем содержимое
             self.left_content.grid()
             self.toggle_btn.config(text="◀")
             self.left_panel_visible = True
@@ -329,97 +354,7 @@ class ChecklistApp:
 
         ttk.Button(btn_frame, text="Экспортировать", command=do_export).pack()
 
-    def collect_export_data(self, scope):
-        """Собирает данные для экспорта"""
-        data = {
-            "project_name": self.project_model.current_project,
-            "project_version": self.project_model.get_project_version(self.project_model.current_project),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "sections": []
-        }
-
-        if scope == "current" and self.project_model.current_object:
-            data["type"] = "object"
-            data["object_name"] = self.project_model.current_object
-            section = self.collect_object_data(self.project_model.current_project,
-                                               self.project_model.current_object)
-            if section:
-                data["sections"].append(section)
-
-        elif scope == "current" and not self.project_model.current_object:
-            data["type"] = "project_common"
-            section = self.collect_project_common_data(self.project_model.current_project)
-            if section:
-                data["sections"].append(section)
-
-        else:
-            data["type"] = "full_project"
-            common_section = self.collect_project_common_data(self.project_model.current_project)
-            if common_section:
-                data["sections"].append(common_section)
-
-            project_data = self.project_model.projects[self.project_model.current_project]
-            for object_name in project_data.get("objects", {}):
-                object_section = self.collect_object_data(self.project_model.current_project, object_name)
-                if object_section:
-                    data["sections"].append(object_section)
-
-        return data
-
-    def collect_project_common_data(self, project_name):
-        """Собирает данные общих чек-листов проекта"""
-        if not self.checklist_tabs:
-            return None
-
-        section = {
-            "name": "Общие чек-листы",
-            "tabs": []
-        }
-
-        for tab_name, tab in self.checklist_tabs.items():
-            if tab_name != "Генплан":
-                tab_data = {
-                    "name": tab_name,
-                    "items": []
-                }
-                for item in tab.items:
-                    status = tab.get_item_status(item)
-                    comment = tab.checklist_items[item]["comment"]
-                    tab_data["items"].append({
-                        "name": item,
-                        "status": status,
-                        "status_text": "Done" if status == 1 else "BUG" if status == 2 else "—",
-                        "comment": comment or ""
-                    })
-                section["tabs"].append(tab_data)
-
-        return section
-
-    def collect_object_data(self, project_name, object_name):
-        """Собирает данные объекта"""
-        if "Генплан" not in self.checklist_tabs:
-            return None
-
-        tab = self.checklist_tabs["Генплан"]
-        section = {
-            "name": f"Объект: {object_name}",
-            "tabs": [{
-                "name": "Генплан",
-                "items": []
-            }]
-        }
-
-        for item in tab.items:
-            status = tab.get_item_status(item)
-            comment = tab.checklist_items[item]["comment"]
-            section["tabs"][0]["items"].append({
-                "name": item,
-                "status": status,
-                "status_text": "Done" if status == 1 else "BUG" if status == 2 else "—",
-                "comment": comment or ""
-            })
-
-        return section
+    # ... (остальные методы остаются без изменений)
 
     def import_template_from_settings(self, listbox):
         """Импортирует шаблон из окна настроек"""
@@ -954,3 +889,95 @@ class ChecklistApp:
 
         self.update_projects_tree()
         messagebox.showinfo("Успех", f"Шаблон {template_name} применен к проекту")
+
+    def collect_export_data(self, scope):
+        """Собирает данные для экспорта"""
+        data = {
+            "project_name": self.project_model.current_project,
+            "project_version": self.project_model.get_project_version(self.project_model.current_project),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sections": []
+        }
+
+        if scope == "current" and self.project_model.current_object:
+            data["type"] = "object"
+            data["object_name"] = self.project_model.current_object
+            section = self.collect_object_data(self.project_model.current_project,
+                                               self.project_model.current_object)
+            if section:
+                data["sections"].append(section)
+
+        elif scope == "current" and not self.project_model.current_object:
+            data["type"] = "project_common"
+            section = self.collect_project_common_data(self.project_model.current_project)
+            if section:
+                data["sections"].append(section)
+
+        else:
+            data["type"] = "full_project"
+            common_section = self.collect_project_common_data(self.project_model.current_project)
+            if common_section:
+                data["sections"].append(common_section)
+
+            project_data = self.project_model.projects[self.project_model.current_project]
+            for object_name in project_data.get("objects", {}):
+                object_section = self.collect_object_data(self.project_model.current_project, object_name)
+                if object_section:
+                    data["sections"].append(object_section)
+
+        return data
+
+    def collect_project_common_data(self, project_name):
+        """Собирает данные общих чек-листов проекта"""
+        if not self.checklist_tabs:
+            return None
+
+        section = {
+            "name": "Общие чек-листы",
+            "tabs": []
+        }
+
+        for tab_name, tab in self.checklist_tabs.items():
+            if tab_name != "Генплан":
+                tab_data = {
+                    "name": tab_name,
+                    "items": []
+                }
+                for item in tab.items:
+                    status = tab.get_item_status(item)
+                    comment = tab.checklist_items[item]["comment"]
+                    tab_data["items"].append({
+                        "name": item,
+                        "status": status,
+                        "status_text": "Done" if status == 1 else "BUG" if status == 2 else "—",
+                        "comment": comment or ""
+                    })
+                section["tabs"].append(tab_data)
+
+        return section
+
+    def collect_object_data(self, project_name, object_name):
+        """Собирает данные объекта"""
+        if "Генплан" not in self.checklist_tabs:
+            return None
+
+        tab = self.checklist_tabs["Генплан"]
+        section = {
+            "name": f"Объект: {object_name}",
+            "tabs": [{
+                "name": "Генплан",
+                "items": []
+            }]
+        }
+
+        for item in tab.items:
+            status = tab.get_item_status(item)
+            comment = tab.checklist_items[item]["comment"]
+            section["tabs"][0]["items"].append({
+                "name": item,
+                "status": status,
+                "status_text": "Done" if status == 1 else "BUG" if status == 2 else "—",
+                "comment": comment or ""
+            })
+
+        return section

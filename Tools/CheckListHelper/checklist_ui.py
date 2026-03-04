@@ -12,46 +12,70 @@ class ChecklistTab:
         self.items = items
         self.app = app
         self.checklist_items = {}
-        self.selection_vars = {}  # Переменные для чекбоксов выбора
+        self.selection_vars = {}
 
         self.frame = ttk.Frame(parent)
         self.setup_ui()
 
     def setup_ui(self):
         """Создает интерфейс вкладки"""
-        # Canvas с прокруткой
-        canvas_frame = ttk.Frame(self.frame)
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        # Используем Canvas для прокрутки
+        self.canvas = tk.Canvas(self.frame, height=Config.CANVAS_HEIGHT, highlightthickness=0)
 
-        canvas = tk.Canvas(canvas_frame, height=Config.CANVAS_HEIGHT)
-        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        # Вертикальный скроллбар
+        self.v_scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
 
-        def configure_scroll_region(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        # Создаем фрейм для содержимого (используем tk.Frame для простоты)
+        self.scrollable_frame = tk.Frame(self.canvas)
 
-        scrollable_frame.bind("<Configure>", configure_scroll_region)
+        # Настраиваем прокрутку
+        self.scrollable_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", tags="inner_frame")
+        self.canvas.configure(yscrollcommand=self.v_scrollbar.set)
 
-        # Создаем пункты
-        for i, item in enumerate(self.items):
-            self.create_item(scrollable_frame, item, i)
+        # Размещаем элементы
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.v_scrollbar.pack(side="right", fill="y")
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        # Создаем пункты с задержкой для плавности
+        self.create_items_batch()
+
+    def _on_frame_configure(self, event):
+        """Обновляет область прокрутки при изменении размера фрейма"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event):
+        """Обновляет ширину внутреннего фрейма при изменении размера canvas"""
+        # Устанавливаем ширину внутреннего фрейма равной ширине canvas
+        self.canvas.itemconfig("inner_frame", width=event.width)
+
+    def create_items_batch(self, start=0, batch_size=20):
+        """Создает пункты пакетами для плавности"""
+        end = min(start + batch_size, len(self.items))
+
+        for i in range(start, end):
+            self.create_item(self.scrollable_frame, self.items[i], i)
+
+        if end < len(self.items):
+            # Создаем следующие пункты с небольшой задержкой
+            self.frame.after(10, lambda: self.create_items_batch(end, batch_size))
 
     def create_item(self, parent, item, row):
         """Создает отдельный пункт с чекбоксом для выбора справа"""
-        frame = ttk.Frame(parent)
-        frame.grid(row=row, column=0, sticky=tk.EW, pady=2)
-        frame.columnconfigure(1, weight=1)  # Растягиваем текст
+        # Используем tk.Frame вместо ttk.Frame для лучшего контроля цветов
+        frame = tk.Frame(parent)
+        frame.grid(row=row, column=0, sticky=tk.EW, pady=1)
+        frame.columnconfigure(1, weight=1)
 
-        # Переменная для статуса (0 - нет, 1 - done, 2 - bug)
+        # Получаем стандартный цвет фона
+        bg_color = frame.cget('background')
+
+        # Переменная для статуса
         status_var = tk.IntVar()
 
-        # Переменная для выбора пункта (чекбокс справа)
+        # Переменная для выбора пункта
         select_var = tk.BooleanVar()
         self.selection_vars[item] = select_var
 
@@ -62,23 +86,24 @@ class ChecklistTab:
             "select_var": select_var
         }
 
-        # Кнопка для отметки статуса (слева)
-        status_btn = tk.Button(frame, text="⚪", width=3, relief=tk.FLAT,
+        # Кнопка для отметки статуса
+        status_btn = tk.Button(frame, text="⚪", width=2, relief=tk.FLAT,
                                command=lambda i=item: self.show_status_dialog(i))
-        status_btn.grid(row=0, column=0, padx=(0, 5))
+        status_btn.grid(row=0, column=0, padx=(0, 2))
 
-        # Текст пункта (по центру, растягивается)
-        text_label = ttk.Label(frame, text=item, anchor=tk.W)
-        text_label.grid(row=0, column=1, sticky=tk.W, padx=5)
+        # Текст пункта
+        text_label = tk.Label(frame, text=item, anchor=tk.W, bg=bg_color)
+        text_label.grid(row=0, column=1, sticky=tk.W, padx=2)
 
         # Метка для комментария
-        comment_label = ttk.Label(frame, text="", foreground="red", font=('Arial', 9, 'italic'))
-        comment_label.grid(row=0, column=2, sticky=tk.W, padx=5)
+        comment_label = tk.Label(frame, text="", foreground="red",
+                                 font=('Arial', 9, 'italic'), bg=bg_color)
+        comment_label.grid(row=0, column=2, sticky=tk.W, padx=2)
 
-        # Чекбокс для выбора пункта (справа)
+        # Чекбокс для выбора пункта (ttk.Checkbutton для единообразия)
         select_cb = ttk.Checkbutton(frame, variable=select_var,
                                     command=self.on_selection_change)
-        select_cb.grid(row=0, column=3, padx=(5, 0))
+        select_cb.grid(row=0, column=3, padx=(2, 0))
 
         self.checklist_items[item]["btn"] = status_btn
         self.checklist_items[item]["text_label"] = text_label
@@ -87,7 +112,8 @@ class ChecklistTab:
 
     def on_selection_change(self):
         """Обработчик изменения выделения"""
-        self.app.update_bulk_buttons()
+        # Используем after для отложенного вызова, чтобы не тормозить интерфейс
+        self.frame.after(10, self.app.update_bulk_buttons)
 
     def get_selected_items(self):
         """Возвращает список выбранных пунктов"""
@@ -118,6 +144,7 @@ class ChecklistTab:
         dialog.transient(self.app.root)
         dialog.grab_set()
         dialog.focus_set()
+        dialog.resizable(False, False)  # Запрещаем изменение размера для скорости
 
         self.center_window(dialog)
 
@@ -157,6 +184,7 @@ class ChecklistTab:
         dialog.transient(self.app.root)
         dialog.grab_set()
         dialog.focus_set()
+        dialog.resizable(False, False)
 
         self.center_window(dialog)
 
@@ -202,13 +230,16 @@ class ChecklistTab:
         elif status == 2:  # Bug
             btn.config(text="⚠", bg=Config.COLORS["bug"])
             if comment:
-                comment_label.config(text=f"💬 {comment[:30]}...")
+                # Ограничиваем длину отображаемого комментария
+                short_comment = comment[:30] + "..." if len(comment) > 30 else comment
+                comment_label.config(text=f"💬 {short_comment}")
         else:  # None
             btn.config(text="⚪", bg="SystemButtonFace")
             comment_label.config(text="")
 
-        # Сохраняем в модель
-        self.app.save_item_status(self.tab_name, item, status, comment)
+        # Сохраняем в модель с задержкой для производительности
+        self.frame.after(50, lambda: self.app.save_item_status(
+            self.tab_name, item, status, comment))
 
     def get_item_status(self, item):
         """Возвращает статус пункта"""
@@ -218,23 +249,23 @@ class ChecklistTab:
         """Помечает выбранные пункты как Done"""
         selected = self.get_selected_items()
         if selected:
+            # Обновляем с задержкой для плавности
             for item in selected:
-                self.set_item_status(item, 1, None)
-                # Снимаем выделение
+                self.frame.after(10, lambda i=item: self.set_item_status(i, 1, None))
                 self.selection_vars[item].set(False)
-            self.app.update_bulk_buttons()
+            self.frame.after(100, self.app.update_bulk_buttons)
 
     def mark_selected_bug(self):
         """Помечает выбранные пункты как BUG"""
         selected = self.get_selected_items()
         if selected:
-            # Показываем диалог для комментария
             dialog = tk.Toplevel(self.app.root)
             dialog.title("Комментарий для выбранных пунктов")
             dialog.geometry("400x150")
             dialog.transient(self.app.root)
             dialog.grab_set()
             dialog.focus_set()
+            dialog.resizable(False, False)
 
             self.center_window(dialog)
 
@@ -252,11 +283,10 @@ class ChecklistTab:
             def save_comment():
                 comment = comment_entry.get().strip()
                 for item in selected:
-                    self.set_item_status(item, 2, comment if comment else "")
-                    # Снимаем выделение
+                    self.frame.after(10, lambda i=item: self.set_item_status(i, 2, comment))
                     self.selection_vars[item].set(False)
                 dialog.destroy()
-                self.app.update_bulk_buttons()
+                self.frame.after(100, self.app.update_bulk_buttons)
 
             def cancel():
                 dialog.destroy()
@@ -275,17 +305,16 @@ class ChecklistTab:
         selected = self.get_selected_items()
         if selected:
             for item in selected:
-                self.set_item_status(item, 0, None)
-                # Снимаем выделение
+                self.frame.after(10, lambda i=item: self.set_item_status(i, 0, None))
                 self.selection_vars[item].set(False)
-            self.app.update_bulk_buttons()
+            self.frame.after(100, self.app.update_bulk_buttons)
 
     def mark_all_done(self):
         """Помечает все пункты как Done"""
         if messagebox.askyesno("Подтверждение",
                                f"Пометить все пункты вкладки '{self.tab_name}' как Done?"):
             for item in self.items:
-                self.set_item_status(item, 1, None)
+                self.frame.after(10, lambda i=item: self.set_item_status(i, 1, None))
 
     def mark_all_bug(self):
         """Помечает все пункты как BUG"""
@@ -295,6 +324,7 @@ class ChecklistTab:
         dialog.transient(self.app.root)
         dialog.grab_set()
         dialog.focus_set()
+        dialog.resizable(False, False)
 
         self.center_window(dialog)
 
@@ -316,7 +346,7 @@ class ChecklistTab:
             if messagebox.askyesno("Подтверждение",
                                    f"Пометить все пункты вкладки '{self.tab_name}' как BUG?"):
                 for item in self.items:
-                    self.set_item_status(item, 2, comment if comment else "")
+                    self.frame.after(10, lambda i=item: self.set_item_status(i, 2, comment))
 
         def cancel():
             dialog.destroy()
@@ -335,7 +365,7 @@ class ChecklistTab:
         if messagebox.askyesno("Подтверждение",
                                f"Сбросить все пункты вкладки '{self.tab_name}'?"):
             for item in self.items:
-                self.set_item_status(item, 0, None)
+                self.frame.after(10, lambda i=item: self.set_item_status(i, 0, None))
 
 
 class BulkOperationsPanel:
@@ -359,7 +389,6 @@ class BulkOperationsPanel:
         button_frame = ttk.Frame(self.frame)
         button_frame.pack(fill=tk.Y, expand=True)
 
-        # Кнопки массовых операций
         self.done_btn = ttk.Button(button_frame, text="✅ Пометить всё\nкак Done",
                                    command=self.app.mark_all_done,
                                    style="Success.TButton")
@@ -420,7 +449,6 @@ class StatsPanel:
 
     def setup_ui(self):
         """Создает интерфейс панели"""
-        # Прогресс бар
         progress_frame = ttk.Frame(self.frame)
         progress_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -431,7 +459,6 @@ class StatsPanel:
         self.progress_label = ttk.Label(progress_frame, text="0%")
         self.progress_label.pack(side=tk.LEFT)
 
-        # Статистика
         stats_frame = ttk.Frame(self.frame)
         stats_frame.pack(side=tk.RIGHT, padx=20)
 
