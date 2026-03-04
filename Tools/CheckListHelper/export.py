@@ -1,5 +1,4 @@
 import os
-import csv
 from datetime import datetime
 from config import get_exports_dir
 
@@ -13,14 +12,51 @@ except ImportError:
 
 try:
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.fonts import addMapping
+    import os
 
     PDF_AVAILABLE = True
+
+    # Регистрируем шрифт с поддержкой кириллицы
+    # Пробуем разные варианты системных шрифтов
+    font_paths = [
+        ("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),  # Linux
+        ("DejaVuSans", "C:/Windows/Fonts/DejaVuSans.ttf"),  # Windows (если установлен)
+        ("Arial", "C:/Windows/Fonts/arial.ttf"),  # Windows Arial
+        ("TimesNewRoman", "C:/Windows/Fonts/times.ttf"),  # Windows Times New Roman
+        ("Verdana", "C:/Windows/Fonts/verdana.ttf"),  # Windows Verdana
+    ]
+
+    FONT_REGISTERED = False
+    for font_name, font_path in font_paths:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                # Создаем отображение для жирного и курсивного вариантов
+                addMapping(font_name, 0, 0, font_name)  # normal
+                addMapping(font_name, 1, 0, font_name)  # bold
+                addMapping(font_name, 0, 1, font_name)  # italic
+                addMapping(font_name, 1, 1, font_name)  # bold italic
+                FONT_REGISTERED = True
+                DEFAULT_FONT = font_name
+                break
+            except:
+                continue
+
+    if not FONT_REGISTERED:
+        # Если не нашли системный шрифт, используем стандартный (может не работать с кириллицей)
+        DEFAULT_FONT = 'Helvetica'
+        print("Предупреждение: Не найден шрифт с поддержкой кириллицы. Русский текст может отображаться некорректно.")
+
 except ImportError:
     PDF_AVAILABLE = False
+    DEFAULT_FONT = 'Helvetica'
 
 
 class ExportManager:
@@ -143,7 +179,7 @@ class ExportManager:
             return False, str(e)
 
     def export_to_pdf(self, data):
-        """Экспортирует данные в PDF"""
+        """Экспортирует данные в PDF с поддержкой русского языка"""
         if not PDF_AVAILABLE:
             return False, "Библиотека reportlab не установлена. Установите: pip install reportlab"
 
@@ -154,58 +190,77 @@ class ExportManager:
             filepath = os.path.join(self.exports_dir, filename)
 
             # Создаем PDF документ
-            doc = SimpleDocTemplate(filepath, pagesize=A4)
+            doc = SimpleDocTemplate(filepath, pagesize=A4,
+                                    leftMargin=30, rightMargin=30,
+                                    topMargin=30, bottomMargin=30)
             styles = getSampleStyleSheet()
             elements = []
 
-            # Заголовок
+            # Создаем стили с поддержкой русского шрифта
             title_style = ParagraphStyle(
                 'CustomTitle',
                 parent=styles['Heading1'],
+                fontName=DEFAULT_FONT,
                 fontSize=16,
                 spaceAfter=30,
-                alignment=1  # Center alignment
+                alignment=1,  # Center alignment
+                encoding='utf-8'
             )
+
+            normal_style = ParagraphStyle(
+                'CustomNormal',
+                parent=styles['Normal'],
+                fontName=DEFAULT_FONT,
+                fontSize=10,
+                encoding='utf-8'
+            )
+
+            heading2_style = ParagraphStyle(
+                'CustomHeading2',
+                parent=styles['Heading2'],
+                fontName=DEFAULT_FONT,
+                fontSize=14,
+                spaceBefore=20,
+                spaceAfter=10,
+                encoding='utf-8'
+            )
+
+            heading3_style = ParagraphStyle(
+                'CustomHeading3',
+                parent=styles['Heading3'],
+                fontName=DEFAULT_FONT,
+                fontSize=12,
+                spaceBefore=10,
+                spaceAfter=5,
+                encoding='utf-8'
+            )
+
+            # Заголовок
             elements.append(Paragraph(f"Отчет по тестированию", title_style))
             elements.append(Spacer(1, 0.2 * inch))
 
             # Информация о проекте
-            info_style = styles['Normal']
-            elements.append(Paragraph(f"<b>Проект:</b> {data.get('project_name', '—')}", info_style))
-            elements.append(Paragraph(f"<b>Версия:</b> {data.get('project_version', '—')}", info_style))
-            elements.append(Paragraph(f"<b>Дата экспорта:</b> {data.get('timestamp', '—')}", info_style))
+            elements.append(Paragraph(f"<b>Проект:</b> {data.get('project_name', '—')}", normal_style))
+            elements.append(Paragraph(f"<b>Версия:</b> {data.get('project_version', '—')}", normal_style))
+            elements.append(Paragraph(f"<b>Дата экспорта:</b> {data.get('timestamp', '—')}", normal_style))
             elements.append(Spacer(1, 0.2 * inch))
 
             # Данные секций
             for section in data.get("sections", []):
                 # Заголовок секции
-                section_style = ParagraphStyle(
-                    'SectionTitle',
-                    parent=styles['Heading2'],
-                    fontSize=14,
-                    spaceBefore=20,
-                    spaceAfter=10
-                )
-                elements.append(Paragraph(section["name"], section_style))
+                elements.append(Paragraph(section["name"], heading2_style))
 
                 for tab in section.get("tabs", []):
                     # Заголовок вкладки
-                    tab_style = ParagraphStyle(
-                        'TabTitle',
-                        parent=styles['Heading3'],
-                        fontSize=12,
-                        spaceBefore=10,
-                        spaceAfter=5
-                    )
-                    elements.append(Paragraph(tab["name"], tab_style))
+                    elements.append(Paragraph(tab["name"], heading3_style))
 
                     # Таблица с данными
                     table_data = [["Пункт", "Статус", "Комментарий"]]
 
                     for item in tab.get("items", []):
                         # Ограничиваем длину текста для PDF
-                        item_name = item["name"][:50] + "..." if len(item["name"]) > 50 else item["name"]
-                        comment = item["comment"][:50] + "..." if len(item["comment"]) > 50 else item["comment"]
+                        item_name = item["name"]
+                        comment = item["comment"] if item["comment"] else ""
 
                         table_data.append([
                             item_name,
@@ -213,16 +268,16 @@ class ExportManager:
                             comment
                         ])
 
-                    # Создаем таблицу
-                    table = Table(table_data, colWidths=[3 * inch, 0.8 * inch, 2 * inch])
+                    # Создаем таблицу с оптимальной шириной колонок
+                    table = Table(table_data, colWidths=[3.5 * inch, 0.8 * inch, 2.2 * inch])
 
                     # Стили таблицы
                     table.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (-1, -1), DEFAULT_FONT),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
                         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                         ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
                         ('GRID', (0, 0), (-1, -1), 1, colors.black),
