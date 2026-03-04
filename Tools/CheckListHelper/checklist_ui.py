@@ -121,36 +121,43 @@ class ChecklistTab:
 
     def center_window(self, window):
         """Центрирует окно относительно главного окна"""
+        # Обновляем геометрию окна
         window.update_idletasks()
 
+        # Получаем размеры главного окна
         main_x = self.app.root.winfo_x()
         main_y = self.app.root.winfo_y()
         main_width = self.app.root.winfo_width()
         main_height = self.app.root.winfo_height()
 
+        # Получаем размеры дочернего окна
         window_width = window.winfo_width()
         window_height = window.winfo_height()
 
+        # Вычисляем координаты для центрирования
         x = main_x + (main_width // 2) - (window_width // 2)
         y = main_y + (main_height // 2) - (window_height // 2)
 
+        # Устанавливаем позицию окна
         window.geometry(f"+{x}+{y}")
+
+        # Делаем окно модальным и поверх всех
+        window.transient(self.app.root)
+        window.grab_set()
+        window.focus_set()
+        window.lift()
+        window.attributes('-topmost', True)
+        window.after(100, lambda: window.attributes('-topmost', False))
 
     def show_status_dialog(self, item):
         """Показывает диалог выбора статуса"""
         dialog = tk.Toplevel(self.app.root)
         dialog.title("Выберите статус")
         dialog.geometry("300x150")
-        dialog.transient(self.app.root)
-        dialog.grab_set()
-        dialog.focus_set()
-        dialog.resizable(False, False)  # Запрещаем изменение размера для скорости
+        dialog.resizable(False, False)
 
+        # Центрируем окно
         self.center_window(dialog)
-
-        dialog.lift()
-        dialog.attributes('-topmost', True)
-        dialog.after(100, lambda: dialog.attributes('-topmost', False))
 
         ttk.Label(dialog, text=f"Пункт: {item}", wraplength=280).pack(pady=10)
 
@@ -163,6 +170,7 @@ class ChecklistTab:
 
         def set_bug():
             dialog.destroy()
+            # Показываем диалог комментария
             self.show_comment_dialog(item)
 
         def set_none():
@@ -181,25 +189,76 @@ class ChecklistTab:
         dialog = tk.Toplevel(self.app.root)
         dialog.title("Комментарий")
         dialog.geometry("400x150")
-        dialog.transient(self.app.root)
-        dialog.grab_set()
-        dialog.focus_set()
         dialog.resizable(False, False)
 
+        # Центрируем окно
         self.center_window(dialog)
-
-        dialog.lift()
-        dialog.attributes('-topmost', True)
-        dialog.after(100, lambda: dialog.attributes('-topmost', False))
 
         ttk.Label(dialog, text=f"Опишите баг для: {item}", wraplength=380).pack(pady=10)
 
-        comment_entry = ttk.Entry(dialog, width=50)
-        comment_entry.pack(pady=5)
+        # Создаем текстовое поле с поддержкой Ctrl+V
+        comment_entry = tk.Text(dialog, width=40, height=3, wrap=tk.WORD)
+        comment_entry.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+
+        # Добавляем скроллбар для текстового поля
+        scrollbar = ttk.Scrollbar(comment_entry, command=comment_entry.yview)
+        comment_entry.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Устанавливаем фокус
         comment_entry.focus_set()
 
+        # Привязываем сочетания клавиш
+        def on_ctrl_v(event):
+            try:
+                # Получаем текст из буфера обмена
+                clipboard_text = dialog.clipboard_get()
+                # Вставляем в текущую позицию курсора
+                comment_entry.insert(tk.INSERT, clipboard_text)
+                return "break"  # Предотвращаем дальнейшую обработку
+            except tk.TclError:
+                # Если буфер обмена пуст, игнорируем
+                pass
+
+        def on_ctrl_a(event):
+            comment_entry.tag_add(tk.SEL, "1.0", tk.END)
+            comment_entry.mark_set(tk.INSERT, "1.0")
+            comment_entry.see(tk.INSERT)
+            return "break"
+
+        def on_ctrl_x(event):
+            try:
+                if comment_entry.tag_ranges(tk.SEL):
+                    selected_text = comment_entry.get(tk.SEL_FIRST, tk.SEL_LAST)
+                    dialog.clipboard_clear()
+                    dialog.clipboard_append(selected_text)
+                    comment_entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
+                return "break"
+            except:
+                pass
+
+        def on_ctrl_c(event):
+            try:
+                if comment_entry.tag_ranges(tk.SEL):
+                    selected_text = comment_entry.get(tk.SEL_FIRST, tk.SEL_LAST)
+                    dialog.clipboard_clear()
+                    dialog.clipboard_append(selected_text)
+                return "break"
+            except:
+                pass
+
+        # Привязываем события
+        comment_entry.bind('<Control-v>', on_ctrl_v)
+        comment_entry.bind('<Control-V>', on_ctrl_v)
+        comment_entry.bind('<Control-a>', on_ctrl_a)
+        comment_entry.bind('<Control-A>', on_ctrl_a)
+        comment_entry.bind('<Control-x>', on_ctrl_x)
+        comment_entry.bind('<Control-X>', on_ctrl_x)
+        comment_entry.bind('<Control-c>', on_ctrl_c)
+        comment_entry.bind('<Control-C>', on_ctrl_c)
+
         def save_comment():
-            comment = comment_entry.get().strip()
+            comment = comment_entry.get(1.0, tk.END).strip()
             self.set_item_status(item, 2, comment if comment else "")
             dialog.destroy()
 
@@ -212,11 +271,17 @@ class ChecklistTab:
         ttk.Button(btn_frame, text="Сохранить", command=save_comment).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=cancel).pack(side=tk.LEFT, padx=5)
 
-        comment_entry.bind('<Return>', lambda e: save_comment())
+        # Привязываем Enter к сохранению
+        comment_entry.bind('<Control-Return>', lambda e: save_comment())
         comment_entry.bind('<Escape>', lambda e: cancel())
 
     def set_item_status(self, item, status, comment):
         """Устанавливает статус пункта"""
+        # Проверяем, существует ли такой пункт в текущей вкладке
+        if item not in self.checklist_items:
+            print(f"Предупреждение: Пункт '{item}' не найден в вкладке '{self.tab_name}'")
+            return
+
         data = self.checklist_items[item]
         data["var"].set(status)
         data["comment"] = comment
@@ -243,7 +308,9 @@ class ChecklistTab:
 
     def get_item_status(self, item):
         """Возвращает статус пункта"""
-        return self.checklist_items[item]["var"].get()
+        if item in self.checklist_items:
+            return self.checklist_items[item]["var"].get()
+        return 0  # Возвращаем 0 если пункт не найден
 
     def mark_selected_done(self):
         """Помечает выбранные пункты как Done"""
@@ -262,26 +329,45 @@ class ChecklistTab:
             dialog = tk.Toplevel(self.app.root)
             dialog.title("Комментарий для выбранных пунктов")
             dialog.geometry("400x150")
-            dialog.transient(self.app.root)
-            dialog.grab_set()
-            dialog.focus_set()
             dialog.resizable(False, False)
 
             self.center_window(dialog)
 
-            dialog.lift()
-            dialog.attributes('-topmost', True)
-            dialog.after(100, lambda: dialog.attributes('-topmost', False))
-
             ttk.Label(dialog, text=f"Введите комментарий для {len(selected)} пунктов:",
                       wraplength=380).pack(pady=10)
 
-            comment_entry = ttk.Entry(dialog, width=50)
-            comment_entry.pack(pady=5)
+            # Текстовое поле с поддержкой Ctrl+V
+            comment_entry = tk.Text(dialog, width=40, height=3, wrap=tk.WORD)
+            comment_entry.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+
+            scrollbar = ttk.Scrollbar(comment_entry, command=comment_entry.yview)
+            comment_entry.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
             comment_entry.focus_set()
 
+            # Привязываем сочетания клавиш
+            def on_ctrl_v(event):
+                try:
+                    clipboard_text = dialog.clipboard_get()
+                    comment_entry.insert(tk.INSERT, clipboard_text)
+                    return "break"
+                except tk.TclError:
+                    pass
+
+            def on_ctrl_a(event):
+                comment_entry.tag_add(tk.SEL, "1.0", tk.END)
+                comment_entry.mark_set(tk.INSERT, "1.0")
+                comment_entry.see(tk.INSERT)
+                return "break"
+
+            comment_entry.bind('<Control-v>', on_ctrl_v)
+            comment_entry.bind('<Control-V>', on_ctrl_v)
+            comment_entry.bind('<Control-a>', on_ctrl_a)
+            comment_entry.bind('<Control-A>', on_ctrl_a)
+
             def save_comment():
-                comment = comment_entry.get().strip()
+                comment = comment_entry.get(1.0, tk.END).strip()
                 for item in selected:
                     self.frame.after(10, lambda i=item: self.set_item_status(i, 2, comment))
                     self.selection_vars[item].set(False)
@@ -297,7 +383,7 @@ class ChecklistTab:
             ttk.Button(btn_frame, text="Сохранить", command=save_comment).pack(side=tk.LEFT, padx=5)
             ttk.Button(btn_frame, text="Отмена", command=cancel).pack(side=tk.LEFT, padx=5)
 
-            comment_entry.bind('<Return>', lambda e: save_comment())
+            comment_entry.bind('<Control-Return>', lambda e: save_comment())
             comment_entry.bind('<Escape>', lambda e: cancel())
 
     def reset_selected(self):
@@ -321,26 +407,45 @@ class ChecklistTab:
         dialog = tk.Toplevel(self.app.root)
         dialog.title("Комментарий для всех багов")
         dialog.geometry("400x150")
-        dialog.transient(self.app.root)
-        dialog.grab_set()
-        dialog.focus_set()
         dialog.resizable(False, False)
 
         self.center_window(dialog)
 
-        dialog.lift()
-        dialog.attributes('-topmost', True)
-        dialog.after(100, lambda: dialog.attributes('-topmost', False))
-
         ttk.Label(dialog, text="Введите общий комментарий для всех багов:",
                   wraplength=380).pack(pady=10)
 
-        comment_entry = ttk.Entry(dialog, width=50)
-        comment_entry.pack(pady=5)
+        # Текстовое поле с поддержкой Ctrl+V
+        comment_entry = tk.Text(dialog, width=40, height=3, wrap=tk.WORD)
+        comment_entry.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(comment_entry, command=comment_entry.yview)
+        comment_entry.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
         comment_entry.focus_set()
 
+        # Привязываем сочетания клавиш
+        def on_ctrl_v(event):
+            try:
+                clipboard_text = dialog.clipboard_get()
+                comment_entry.insert(tk.INSERT, clipboard_text)
+                return "break"
+            except tk.TclError:
+                pass
+
+        def on_ctrl_a(event):
+            comment_entry.tag_add(tk.SEL, "1.0", tk.END)
+            comment_entry.mark_set(tk.INSERT, "1.0")
+            comment_entry.see(tk.INSERT)
+            return "break"
+
+        comment_entry.bind('<Control-v>', on_ctrl_v)
+        comment_entry.bind('<Control-V>', on_ctrl_v)
+        comment_entry.bind('<Control-a>', on_ctrl_a)
+        comment_entry.bind('<Control-A>', on_ctrl_a)
+
         def save_comment():
-            comment = comment_entry.get().strip()
+            comment = comment_entry.get(1.0, tk.END).strip()
             dialog.destroy()
 
             if messagebox.askyesno("Подтверждение",
@@ -357,7 +462,7 @@ class ChecklistTab:
         ttk.Button(btn_frame, text="Продолжить", command=save_comment).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=cancel).pack(side=tk.LEFT, padx=5)
 
-        comment_entry.bind('<Return>', lambda e: save_comment())
+        comment_entry.bind('<Control-Return>', lambda e: save_comment())
         comment_entry.bind('<Escape>', lambda e: cancel())
 
     def reset_all(self):
@@ -449,6 +554,7 @@ class StatsPanel:
 
     def setup_ui(self):
         """Создает интерфейс панели"""
+        # Прогресс бар
         progress_frame = ttk.Frame(self.frame)
         progress_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -459,6 +565,7 @@ class StatsPanel:
         self.progress_label = ttk.Label(progress_frame, text="0%")
         self.progress_label.pack(side=tk.LEFT)
 
+        # Статистика
         stats_frame = ttk.Frame(self.frame)
         stats_frame.pack(side=tk.RIGHT, padx=20)
 
