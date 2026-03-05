@@ -7,7 +7,7 @@ class CursorController:
     def __init__(self, root):
         self.root = root
         self.root.title("Управление курсором")
-        self.root.geometry("400x250")
+        self.root.geometry("250x210")
         self.root.resizable(False, False)
         self.overlay = None
         self.create_widgets()
@@ -43,7 +43,7 @@ class CursorController:
         self.show_button.pack(pady=5)
 
         info_frame = tk.Frame(self.root, bg="#ecf0f1", relief=tk.GROOVE, bd=2)
-        info_frame.pack(pady=20, padx=15, fill=tk.BOTH)
+        info_frame.pack(pady=5, padx=15, fill=tk.BOTH)
 
         hotkeys = [
             "Ctrl + Alt + H - Скрыть курсор",
