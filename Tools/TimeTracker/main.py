@@ -6,12 +6,282 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QP
                              QComboBox, QLineEdit, QLabel, QMessageBox, QSystemTrayIcon,
                              QMenu, QTextEdit, QDialog, QTabWidget, QInputDialog,
                              QDialogButtonBox, QRadioButton, QButtonGroup, QListWidget,
-                             QListWidgetItem, QFrame, QSplitter, QScrollArea)
+                             QListWidgetItem, QFrame, QSplitter, QScrollArea, QSpinBox,
+                             QCheckBox, QGroupBox)
 from PyQt5.QtCore import QTimer, Qt, QDateTime, pyqtSignal, QPropertyAnimation, QEasingCurve, QRect
-from PyQt5.QtGui import QIcon, QFont, QColor
+from PyQt5.QtGui import QIcon, QFont, QColor, QPalette
 
 # Имя файла для хранения данных
 DATA_FILE = 'time_stats.json'
+PIPELINE_FILE = 'pipeline_projects.json'
+
+
+class PipelineProject:
+    """Класс для проекта в конвейере"""
+
+    def __init__(self, project_name, minutes):
+        self.project_name = project_name
+        self.minutes = minutes  # Время в минутах
+        self.completed = False
+
+    def to_dict(self):
+        return {
+            'project_name': self.project_name,
+            'minutes': self.minutes,
+            'completed': self.completed
+        }
+
+    @staticmethod
+    def from_dict(data):
+        project = PipelineProject(data['project_name'], data['minutes'])
+        project.completed = data.get('completed', False)
+        return project
+
+
+class PipelineDialog(QDialog):
+    """Диалог для управления конвейером проектов"""
+
+    pipelineStarted = pyqtSignal(list)  # Сигнал при запуске конвейера
+
+    def __init__(self, parent=None, projects=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.all_projects = projects or []  # Все доступные проекты
+        self.pipeline_projects = []  # Список PipelineProject
+        self.current_index = -1
+
+        self.setWindowTitle("🏭 Конвейер-режим")
+        self.setGeometry(400, 300, 500, 500)
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+
+        self.initUI()
+        self.load_pipeline()
+
+    def initUI(self):
+        layout = QVBoxLayout()
+
+        # Верхняя панель с информацией
+        info_label = QLabel("🏭 КОНВЕЙЕР-РЕЖИМ")
+        info_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2196F3;")
+        info_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info_label)
+
+        help_text = QLabel("Выберите проекты из списка и укажите время для каждого. "
+                           "При запуске таймер будет автоматически переключаться между проектами.")
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(help_text)
+
+        # Панель добавления проекта в конвейер
+        add_group = QGroupBox("➕ Добавить проект в конвейер")
+        add_layout = QHBoxLayout()
+
+        self.project_combo = QComboBox()
+        self.project_combo.addItems(self.all_projects)
+        add_layout.addWidget(self.project_combo)
+
+        self.time_spin = QSpinBox()
+        self.time_spin.setRange(1, 480)  # до 8 часов
+        self.time_spin.setSuffix(" мин")
+        self.time_spin.setValue(25)  # Pomodoro по умолчанию
+        add_layout.addWidget(self.time_spin)
+
+        add_btn = QPushButton("➕")
+        add_btn.setMaximumWidth(30)
+        add_btn.clicked.connect(self.add_to_pipeline)
+        add_layout.addWidget(add_btn)
+
+        add_group.setLayout(add_layout)
+        layout.addWidget(add_group)
+
+        # Список проектов в конвейере
+        list_group = QGroupBox("📋 Очередь проектов")
+        list_layout = QVBoxLayout()
+
+        self.pipeline_list = QListWidget()
+        self.pipeline_list.itemClicked.connect(self.on_item_clicked)
+        list_layout.addWidget(self.pipeline_list)
+
+        # Кнопки управления списком
+        btn_layout = QHBoxLayout()
+
+        self.move_up_btn = QPushButton("↑ Вверх")
+        self.move_up_btn.clicked.connect(self.move_up)
+        btn_layout.addWidget(self.move_up_btn)
+
+        self.move_down_btn = QPushButton("↓ Вниз")
+        self.move_down_btn.clicked.connect(self.move_down)
+        btn_layout.addWidget(self.move_down_btn)
+
+        self.delete_btn = QPushButton("✖ Удалить")
+        self.delete_btn.clicked.connect(self.delete_from_pipeline)
+        btn_layout.addWidget(self.delete_btn)
+
+        self.clear_btn = QPushButton("🗑 Очистить всё")
+        self.clear_btn.clicked.connect(self.clear_pipeline)
+        btn_layout.addWidget(self.clear_btn)
+
+        list_layout.addLayout(btn_layout)
+        list_group.setLayout(list_layout)
+        layout.addWidget(list_group)
+
+        # Панель управления
+        control_group = QGroupBox("🎮 Управление")
+        control_layout = QHBoxLayout()
+
+        self.start_btn = QPushButton("▶ Запустить конвейер")
+        self.start_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.start_btn.clicked.connect(self.start_pipeline)
+        control_layout.addWidget(self.start_btn)
+
+        self.close_btn = QPushButton("✕ Закрыть")
+        self.close_btn.clicked.connect(self.close)
+        control_layout.addWidget(self.close_btn)
+
+        control_group.setLayout(control_layout)
+        layout.addWidget(control_group)
+
+        self.setLayout(layout)
+
+        self.update_list()
+
+    def add_to_pipeline(self):
+        """Добавляет выбранный проект в конвейер"""
+        project = self.project_combo.currentText()
+        minutes = self.time_spin.value()
+
+        # Проверяем, нет ли уже такого проекта в очереди
+        for p in self.pipeline_projects:
+            if p.project_name == project and not p.completed:
+                reply = QMessageBox.question(
+                    self, "Проект уже в очереди",
+                    f"Проект '{project}' уже есть в очереди. Добавить еще один?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return
+                break
+
+        pipeline_project = PipelineProject(project, minutes)
+        self.pipeline_projects.append(pipeline_project)
+        self.save_pipeline()
+        self.update_list()
+
+    def update_list(self):
+        """Обновляет отображение списка"""
+        self.pipeline_list.clear()
+
+        for i, p in enumerate(self.pipeline_projects):
+            # Форматируем время
+            hours = p.minutes // 60
+            minutes = p.minutes % 60
+            if hours > 0:
+                time_str = f"{hours}ч {minutes}мин"
+            else:
+                time_str = f"{minutes}мин"
+
+            # Создаем элемент списка
+            text = f"{i + 1}. {p.project_name} [{time_str}]"
+            if p.completed:
+                text = "✅ " + text
+
+            item = QListWidgetItem(text)
+
+            # Раскрашиваем в зависимости от статуса
+            if p.completed:
+                item.setForeground(QColor("#888"))  # Серый для выполненных
+            elif i == self.current_index:
+                item.setBackground(QColor("#E3F2FD"))  # Голубой для текущего
+                item.setForeground(QColor("#000"))
+
+            item.setData(Qt.UserRole, i)
+            self.pipeline_list.addItem(item)
+
+    def on_item_clicked(self, item):
+        """Обработчик клика по элементу"""
+        index = item.data(Qt.UserRole)
+        if index is not None:
+            self.pipeline_list.setCurrentRow(index)
+
+    def move_up(self):
+        """Перемещает проект вверх"""
+        current = self.pipeline_list.currentRow()
+        if current > 0:
+            self.pipeline_projects[current], self.pipeline_projects[current - 1] = \
+                self.pipeline_projects[current - 1], self.pipeline_projects[current]
+            self.save_pipeline()
+            self.update_list()
+            self.pipeline_list.setCurrentRow(current - 1)
+
+    def move_down(self):
+        """Перемещает проект вниз"""
+        current = self.pipeline_list.currentRow()
+        if current < len(self.pipeline_projects) - 1:
+            self.pipeline_projects[current], self.pipeline_projects[current + 1] = \
+                self.pipeline_projects[current + 1], self.pipeline_projects[current]
+            self.save_pipeline()
+            self.update_list()
+            self.pipeline_list.setCurrentRow(current + 1)
+
+    def delete_from_pipeline(self):
+        """Удаляет выбранный проект из конвейера"""
+        current = self.pipeline_list.currentRow()
+        if current >= 0:
+            del self.pipeline_projects[current]
+            self.save_pipeline()
+            self.update_list()
+
+    def clear_pipeline(self):
+        """Очищает весь конвейер"""
+        reply = QMessageBox.question(
+            self, "Подтверждение",
+            "Очистить весь конвейер?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.pipeline_projects.clear()
+            self.current_index = -1
+            self.save_pipeline()
+            self.update_list()
+
+    def start_pipeline(self):
+        """Запускает конвейер"""
+        if not self.pipeline_projects:
+            QMessageBox.warning(self, "Ошибка", "Добавьте хотя бы один проект в конвейер!")
+            return
+
+        # Сбрасываем статус completed
+        for p in self.pipeline_projects:
+            p.completed = False
+        self.current_index = -1
+        self.update_list()
+
+        # Отправляем сигнал родителю
+        self.pipelineStarted.emit(self.pipeline_projects)
+        self.close()
+
+    def save_pipeline(self):
+        """Сохраняет конвейер в файл"""
+        try:
+            data = [p.to_dict() for p in self.pipeline_projects]
+            with open(PIPELINE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except:
+            pass
+
+    def load_pipeline(self):
+        """Загружает конвейер из файла"""
+        if os.path.exists(PIPELINE_FILE):
+            try:
+                with open(PIPELINE_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.pipeline_projects = [PipelineProject.from_dict(d) for d in data]
+            except:
+                self.pipeline_projects = []
+        else:
+            self.pipeline_projects = []
+
+        self.update_list()
 
 
 class DeleteProjectDialog(QDialog):
@@ -175,7 +445,7 @@ class ProjectListWidget(QWidget):
         # Заголовок с кнопкой сворачивания
         header_layout = QHBoxLayout()
 
-        self.toggle_btn = QPushButton("▼ Проекты\задачи")
+        self.toggle_btn = QPushButton("▼ Проекты")
         self.toggle_btn.setStyleSheet("""
             QPushButton {
                 text-align: left;
@@ -227,7 +497,7 @@ class ProjectListWidget(QWidget):
         content_layout.addWidget(self.recent_list)
 
         # Секция "Все проекты"
-        self.all_label = QLabel("📋 ВСЕ ПРОЕКТЫ\ЗАДАЧИ")
+        self.all_label = QLabel("📋 ВСЕ ПРОЕКТЫ")
         self.all_label.setStyleSheet("font-weight: bold; color: #666;")
         content_layout.addWidget(self.all_label)
 
@@ -249,10 +519,10 @@ class ProjectListWidget(QWidget):
 
         if self.is_visible:
             self.content_widget.show()
-            self.toggle_btn.setText("▼ Проекты\задачи")
+            self.toggle_btn.setText("▼ Проекты")
         else:
             self.content_widget.hide()
-            self.toggle_btn.setText("▶ Проекты\задачи")
+            self.toggle_btn.setText("▶ Проекты")
 
         # Обновляем размер окна родителя
         if self.parent and hasattr(self.parent, 'adjust_size'):
@@ -389,6 +659,18 @@ class TimeTracker(QWidget):
         self.block_project_switch = False  # Блокировка рекурсивных вызовов
         self.recent_projects = []  # Список недавних проектов (макс 5)
 
+        # Pipeline режим
+        self.pipeline_mode = False  # Флаг конвейер-режима
+        self.pipeline_projects = []  # Список проектов в конвейере
+        self.current_project_index = -1  # Текущий проект в конвейере
+        self.project_start_time = None  # Время начала текущего проекта
+        self.pipeline_timer = QTimer()  # Таймер для отслеживания времени проекта
+        self.pipeline_timer.timeout.connect(self.check_project_time)
+        self.blink_timer = QTimer()  # Таймер для мигания
+        self.blink_timer.timeout.connect(self.blink_window)
+        self.blink_state = False
+        self.original_palette = None
+
         # Загрузка данных из файла
         self.load_data()
 
@@ -450,6 +732,20 @@ class TimeTracker(QWidget):
 
         layout.addLayout(buttons_layout)
 
+        # Кнопка конвейер-режима
+        pipeline_layout = QHBoxLayout()
+
+        self.pipeline_btn = QPushButton('🏭 Конвейер')
+        self.pipeline_btn.setMaximumHeight(25)
+        self.pipeline_btn.clicked.connect(self.show_pipeline_dialog)
+        pipeline_layout.addWidget(self.pipeline_btn)
+
+        self.pipeline_status_label = QLabel('')
+        self.pipeline_status_label.setStyleSheet("color: #2196F3; font-size: 9px;")
+        pipeline_layout.addWidget(self.pipeline_status_label)
+
+        layout.addLayout(pipeline_layout)
+
         # Список проектов с поиском (сворачиваемый)
         self.project_list = ProjectListWidget(self)
         self.project_list.projectSelected.connect(self.switch_project_by_name)
@@ -484,10 +780,10 @@ class TimeTracker(QWidget):
         """Подгоняет размер окна под содержимое"""
         if self.project_list.is_visible:
             # Полный размер
-            self.setFixedHeight(450)
+            self.setFixedHeight(500)
         else:
             # Свернутый размер
-            self.setFixedHeight(200)
+            self.setFixedHeight(250)
 
         # Обновляем геометрию
         self.adjustSize()
@@ -517,6 +813,9 @@ class TimeTracker(QWidget):
         report_action = tray_menu.addAction("📅 Отчет")
         report_action.triggered.connect(self.show_statistics_dialog)
 
+        pipeline_action = tray_menu.addAction("🏭 Конвейер")
+        pipeline_action.triggered.connect(self.show_pipeline_dialog)
+
         tray_menu.addSeparator()
 
         # Меню проектов
@@ -542,24 +841,23 @@ class TimeTracker(QWidget):
         self.tray_icon.show()
 
         self.tray_icon.activated.connect(self.tray_icon_activated)
+        self.tray_icon.messageClicked.connect(self.on_tray_message_clicked)
 
     def toggle_project_list(self):
         """Показывает или скрывает список проектов"""
         self.project_list.toggle_visibility()
-
-        # Обновляем пункт меню
-        if self.project_list.is_visible:
-            action_text = "📋 Скрыть список проектов"
-        else:
-            action_text = "📋 Показать список проектов"
-
-        # Обновляем меню (просто для информации, текст в меню не меняем динамически)
 
     def tray_icon_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
             self.show()
             self.raise_()
             self.activateWindow()
+
+    def on_tray_message_clicked(self):
+        """Обработчик клика по уведомлению в трее"""
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def update_project_menu(self):
         if hasattr(self, 'project_menu'):
@@ -577,6 +875,144 @@ class TimeTracker(QWidget):
 
     def switch_project_from_menu(self, project_name):
         self.switch_project_by_name(project_name)
+
+    # --- Pipeline режим (упрощенный) ---
+    def show_pipeline_dialog(self):
+        """Показывает диалог конвейер-режима"""
+        if not self.projects:
+            QMessageBox.warning(self, "Ошибка", "Сначала создайте хотя бы один проект!")
+            return
+
+        dialog = PipelineDialog(self, sorted(self.projects.keys()))
+        dialog.pipelineStarted.connect(self.start_pipeline)
+        dialog.exec_()
+
+    def start_pipeline(self, pipeline_projects):
+        """Запускает конвейер с проектами"""
+        self.pipeline_mode = True
+        self.pipeline_projects = pipeline_projects
+        self.current_project_index = 0
+        self.start_next_pipeline_project()
+
+        self.pipeline_status_label.setText(f"🏭 {len(pipeline_projects)} проектов")
+
+        self.tray_icon.showMessage(
+            "🏭 Конвейер запущен",
+            f"Проект 1/{len(pipeline_projects)}: {pipeline_projects[0].project_name}",
+            QSystemTrayIcon.Information,
+            3000
+        )
+
+    def start_next_pipeline_project(self):
+        """Запускает следующий проект в конвейере"""
+        if self.current_project_index >= len(self.pipeline_projects):
+            # Все проекты выполнены
+            self.finish_pipeline()
+            return
+
+        project = self.pipeline_projects[self.current_project_index]
+
+        # Переключаемся на проект
+        if project.project_name in self.projects:
+            self.switch_project_by_name(project.project_name)
+
+        # Запоминаем время старта проекта
+        self.project_start_time = QDateTime.currentDateTime().toSecsSinceEpoch()
+
+        # Запускаем таймер для проверки времени проекта
+        self.pipeline_timer.start(1000)  # Проверяем каждую секунду
+
+        # Обновляем статус
+        self.pipeline_status_label.setText(f"🏭 {project.project_name} ({project.minutes}мин)")
+
+        # Показываем уведомление
+        self.tray_icon.showMessage(
+            "🏭 Следующий проект",
+            f"{project.project_name} — {project.minutes} минут",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+        # Если таймер не запущен, запускаем
+        if not self.timer_running:
+            self.start_pause_timer()
+
+    def check_project_time(self):
+        """Проверяет, не истекло ли время текущего проекта"""
+        if not self.pipeline_mode or self.current_project_index >= len(self.pipeline_projects):
+            return
+
+        project = self.pipeline_projects[self.current_project_index]
+        elapsed = int((QDateTime.currentDateTime().toSecsSinceEpoch() - self.project_start_time))
+
+        # Проверяем, не прошло ли заданное время
+        if elapsed >= project.minutes * 60:
+            # Время истекло
+            project.completed = True
+
+            # Мигаем и показываем уведомление
+            self.start_blinking()
+
+            self.tray_icon.showMessage(
+                "⏰ Время истекло!",
+                f"Проект '{project.project_name}' завершен",
+                QSystemTrayIcon.Warning,
+                5000
+            )
+
+            # Переходим к следующему проекту
+            self.current_project_index += 1
+
+            if self.current_project_index < len(self.pipeline_projects):
+                # Есть еще проекты
+                self.start_next_pipeline_project()
+            else:
+                # Все проекты выполнены
+                self.finish_pipeline()
+
+    def start_blinking(self):
+        """Начинает мигание окна"""
+        self.original_palette = self.palette()
+        self.blink_state = True
+        self.blink_timer.start(500)  # Мигаем каждые 500 мс
+
+    def stop_blinking(self):
+        """Останавливает мигание окна"""
+        self.blink_timer.stop()
+        if self.original_palette:
+            self.setPalette(self.original_palette)
+        self.blink_state = False
+
+    def blink_window(self):
+        """Мигает окном (меняет цвет)"""
+        if self.blink_state:
+            # Оранжевый фон
+            palette = self.palette()
+            palette.setColor(QPalette.Window, QColor(255, 200, 100))
+            self.setPalette(palette)
+        else:
+            # Возвращаем оригинальный цвет
+            if self.original_palette:
+                self.setPalette(self.original_palette)
+
+        self.blink_state = not self.blink_state
+
+    def finish_pipeline(self):
+        """Завершает конвейер"""
+        self.pipeline_mode = False
+        self.pipeline_projects = []
+        self.current_project_index = -1
+        self.pipeline_timer.stop()
+        self.stop_blinking()
+
+        self.pipeline_status_label.setText("")
+
+        self.tray_icon.showMessage(
+            "🏭 Конвейер завершен",
+            "Все проекты выполнены!",
+            QSystemTrayIcon.Information,
+            3000
+        )
 
     # --- Управление проектами ---
     def add_project_dialog(self):
@@ -773,6 +1209,10 @@ class TimeTracker(QWidget):
             self.start_time = None
             self.current_session_project = None
 
+            # Если в конвейер-режиме, останавливаем таймер проектов
+            if self.pipeline_mode:
+                self.pipeline_timer.stop()
+
             self.tray_icon.showMessage(
                 "Time Tracker",
                 "Таймер на паузе",
@@ -785,6 +1225,11 @@ class TimeTracker(QWidget):
             self.start_time = QDateTime.currentDateTime().toSecsSinceEpoch()
             self.current_session_project = self.current_project
             self.start_pause_btn.setText('⏸ Пауза')
+
+            # Если в конвейер-режиме, запускаем таймер проектов
+            if self.pipeline_mode and self.current_project_index >= 0:
+                self.pipeline_timer.start(1000)
+                self.project_start_time = QDateTime.currentDateTime().toSecsSinceEpoch()
 
             self.tray_icon.showMessage(
                 "Time Tracker",
@@ -874,6 +1319,11 @@ class TimeTracker(QWidget):
 
         if self.timer_running and self.current_project:
             report += f"\n\n⏱ Текущий проект: {self.current_project}"
+
+        # Добавляем информацию о конвейере, если активен
+        if self.pipeline_mode and self.current_project_index < len(self.pipeline_projects):
+            project = self.pipeline_projects[self.current_project_index]
+            report += f"\n\n🏭 Конвейер: {project.project_name} ({project.minutes}мин)"
 
         now = QDateTime.currentDateTime().toString("hh:mm:ss")
         report += f"\n\nОбновлено: {now}"
